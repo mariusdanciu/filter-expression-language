@@ -1,4 +1,15 @@
 use std::fmt::Debug;
+use thiserror::Error;
+
+#[derive(Error,Debug)]
+pub enum EvaluatorError {
+    #[error("function not found: {0}")]
+    FunctionNotFound(String),
+    #[error("invalid arguments: {0}")]
+    InvalidArguments(String),
+    #[error("evaluation error: {0}")]
+    EvaluationError(String),
+}
 
 #[derive(Debug)]
 pub enum Primitives {
@@ -19,7 +30,7 @@ impl Ast {
         &self,
         ctx: &T,
         evaluator: FunctionEvaluator<T>,
-    ) -> std::result::Result<bool, String> {
+    ) -> std::result::Result<bool, EvaluatorError> {
         match self {
             Ast::Func { name, args } => evaluator(ctx, name, args),
             Ast::And { left, right } => {
@@ -32,4 +43,4 @@ impl Ast {
     }
 }
 
-pub type FunctionEvaluator<T> = fn(&T, &str, &Vec<Primitives>) -> Result<bool, String>;
+pub type FunctionEvaluator<T> = fn(&T, &str, &Vec<Primitives>) -> Result<bool, EvaluatorError>;

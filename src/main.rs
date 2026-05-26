@@ -4,8 +4,9 @@ mod lang;
 
 use crate::lang::ast::Primitives;
 use crate::lang::parsers::*;
+use crate::lang::ast::EvaluatorError;
 
-fn path_prefix(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, String> {
+fn path_prefix(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, EvaluatorError> {
     let first = &args[0];
     if let Primitives::String(value) = first
         && args.len() == 1
@@ -13,10 +14,10 @@ fn path_prefix(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, String> {
         return Ok(value == "/api");
     }
 
-    Err("'path_prefix' - expected string argument".to_string())
+    Err(EvaluatorError::InvalidArguments("'path_prefix' - expected string argument".to_string()))
 }
 
-fn method(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, String> {
+fn method(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, EvaluatorError> {
     let first = &args[0];
     if let Primitives::String(value) = first
         && args.len() == 1
@@ -24,10 +25,10 @@ fn method(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, String> {
         return Ok(value == "GET");
     }
 
-    Err("'method' - expected string argument".to_string())
+    Err(EvaluatorError::InvalidArguments("'method' - expected string argument".to_string()))
 }
 
-fn has_header(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, String> {
+fn has_header(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, EvaluatorError> {
     let first = &args[0];
     if let Primitives::String(value) = first
         && args.len() == 1
@@ -35,10 +36,10 @@ fn has_header(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, String> {
         return Ok(value == "X-API-KEY");
     }
 
-    Err("'has_header' - expected string argument".to_string())
+    Err(EvaluatorError::InvalidArguments("'has_header' - expected string argument".to_string()))
 }
 
-fn has_query(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, String> {
+fn has_query(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, EvaluatorError> {
     let first = &args[0];
     if let Primitives::String(value) = first
         && args.len() == 1
@@ -46,16 +47,16 @@ fn has_query(ctx: &Context, args: &Vec<Primitives>) -> Result<bool, String> {
         return Ok(value == "version");
     }
 
-    Err("'has_query' - expected string argument".to_string())
+    Err(EvaluatorError::InvalidArguments("'has_query' - expected string argument".to_string()))
 }
 
-fn evaluator(ctx: &Context, name: &str, args: &Vec<Primitives>) -> Result<bool, String> {
+fn evaluator(ctx: &Context, name: &str, args: &Vec<Primitives>) -> Result<bool, EvaluatorError> {
     match name {
         "path_prefix" => path_prefix(ctx, args),
         "method" => method(ctx, args),
         "has_header" => has_header(ctx, args),
         "has_query" => has_query(ctx, args),
-        _ => Err(format!("Unknown function: {}", name)),
+        _ => Err(EvaluatorError::FunctionNotFound(name.to_string())),
     }
 }
 
