@@ -15,13 +15,21 @@ pub enum Ast {
 }
 
 impl Ast {
-    pub fn eval(&self, evaluator: FunctionEvaluator) -> std::result::Result<bool, String> {
+    pub fn eval<T>(
+        &self,
+        ctx: &T,
+        evaluator: FunctionEvaluator<T>,
+    ) -> std::result::Result<bool, String> {
         match self {
-            Ast::Func { name, args } => evaluator(name, args),
-            Ast::And { left, right } => Ok(left.eval(evaluator)? && right.eval(evaluator)?),
-            Ast::Or { left, right } => Ok(left.eval(evaluator)? || right.eval(evaluator)?),
+            Ast::Func { name, args } => evaluator(ctx, name, args),
+            Ast::And { left, right } => {
+                Ok(left.eval(ctx, evaluator)? && right.eval(ctx, evaluator)?)
+            }
+            Ast::Or { left, right } => {
+                Ok(left.eval(ctx, evaluator)? || right.eval(ctx, evaluator)?)
+            }
         }
     }
 }
 
-pub type FunctionEvaluator = fn(&str, &Vec<Primitives>) -> Result<bool, String>;
+pub type FunctionEvaluator<T> = fn(&T, &str, &Vec<Primitives>) -> Result<bool, String>;
