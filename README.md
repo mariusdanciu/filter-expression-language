@@ -157,6 +157,106 @@ Func {
 }
 ```
 
+## Evaluating Expressions
+
+After parsing, you can evaluate expressions against a context using the `eval` method.
+
+### Evaluation API
+
+```rust
+pub type FunctionEvaluator<T> = fn(&T, &str, &Vec<Primitives>) -> Result<bool, String>;
+
+impl Ast {
+    pub fn eval<T>(
+        &self,
+        ctx: &T,
+        evaluator: FunctionEvaluator<T>,
+    ) -> Result<bool, String>
+}
+```
+
+### Complete Example
+
+```rust
+use winnow::Parser;
+use fel::lang::parsers::*;
+use fel::lang::ast::Primitives;
+
+// Define your context type
+struct HttpRequest {
+    path: String,
+    method: String,
+    headers: Vec<(String, String)>,
+}
+
+fn main() {
+    // Parse the expression
+    let input = "path_prefix(\"/api\") and method(\"GET\")";
+    let ast = expr.parse(input).unwrap();
+
+    // Create a context
+    let request = HttpRequest {
+        path: "/api/users".to_string(),
+        method: "GET".to_string(),
+        headers: vec![
+            ("X-API-KEY".to_string(), "secret123".to_string()),
+        ],
+    };
+
+    // Define the evaluator function
+    let evaluator = |ctx: &HttpRequest, name: &str, args: &Vec<Primitives>| {
+        match name {
+            "path_prefix" => {
+                if let Some(Primitives::String(prefix)) = args.first() {
+                    Ok(ctx.path.starts_with(prefix))
+                } else {
+                    Err("path_prefix requires a string argument".to_string())
+                }
+            }
+            "method" => {
+                if let Some(Primitives::String(method)) = args.first() {
+                    Ok(ctx.method == *method)
+                } else {
+                    Err("method requires a string argument".to_string())
+                }
+            }
+            "has_header" => {
+                if let Some(Primitives::String(header_name)) = args.first() {
+                    Ok(ctx.headers.iter().any(|(name, _)| name == header_name))
+                } else {
+                    Err("has_header requires a string argument".to_string())
+                }
+            }
+            _ => Err(format!("Unknown function: {}", name)),
+        }
+    };
+
+    // Evaluate the expression
+    match ast.eval(&request, evaluator) {
+        Ok(result) => println!("Result: {}", result),  // true
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+```
+
+### How Evaluation Works
+
+1. **Parse** the expression string into an AST
+2. **Define a context type** containing the data your functions need (e.g., HTTP request)
+3. **Create an evaluator function** that maps function names to implementations
+4. **Call `ast.eval()`** with your context and evaluator
+
+The evaluator function receives:
+- `ctx: &T` - your context (e.g., `&HttpRequest`)
+- `name: &str` - the function name (e.g., `"path_prefix"`)
+- `args: &Vec<Primitives>` - the function arguments
+
+It returns `Result<bool, String>`:
+- `Ok(true)` or `Ok(false)` for the boolean result
+- `Err(message)` for evaluation errors
+
+The AST handles the boolean logic (`and`, `or`) automatically, calling your evaluator only for leaf function nodes.
+
 ## Running Tests
 
 ```bash
