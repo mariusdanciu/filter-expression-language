@@ -1,14 +1,18 @@
 use winnow::Parser;
-use winnow::Result;
 use winnow::ascii::dec_int;
 use winnow::ascii::space0;
 use winnow::combinator::*;
-use winnow::error::ContextError;
+use winnow::error::{AddContext, ParserError, StrContext, StrContextValue};
 use winnow::token::*;
 
 use crate::lang::ast::*;
 
-pub fn token<'s>(name: &'s str) -> impl Parser<&'s str, &'s str, ContextError> {
+type Result<T> = winnow::Result<T>;
+
+pub fn token<'s, E>(name: &'s str) -> impl Parser<&'s str, &'s str, E>
+where
+    E: ParserError<&'s str> + AddContext<&'s str, StrContext>,
+{
     delimited(
         space0,        // 1. Consume 0 or more spaces on the left
         literal(name), // 2. Parse the core literal token
@@ -35,6 +39,8 @@ fn string_literal<'s>(input: &mut &'s str) -> Result<Primitives> {
         '"',                 // Closing delimiter
     )
     .map(|s: &'s str| Primitives::String(s.to_string()))
+    .context(StrContext::Label("string literal"))
+    .context(StrContext::Expected(StrContextValue::Description("quoted string like \"value\"")))
     .parse_next(input)
 }
 
@@ -55,29 +61,44 @@ pub fn func_name<'s>(input: &mut &'s str) -> Result<&'s str> {
     take_while(1.., ('a'..='z', 'A'..='Z', '0'..='9', '-', '_')).parse_next(input)
 }
 
-pub fn func_call<'s>(input: &mut &str) -> winnow::Result<Box<Ast>> {
-    (func_name, token("("), seq_literals, token(")"))
+pub fn func_call<'s>(input: &mut &str) -> Result<Box<Ast>> {
+    (
+        func_name.context(StrContext::Label("function name")),
+        token("(").context(StrContext::Expected(StrContextValue::CharLiteral('('))),
+        seq_literals,
+        token(")").context(StrContext::Expected(StrContextValue::CharLiteral(')'))),
+    )
         .map(|(name, _, string, _)| {
             Box::new(Ast::Func {
                 name: name.to_string(),
                 args: string.into_iter().collect(),
             })
         })
+        .context(StrContext::Label("function call"))
         .parse_next(input)
 }
 
 pub fn parens_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
-    (token("("), bool_expr, token(")"))
+    (
+        token("(").context(StrContext::Expected(StrContextValue::CharLiteral('('))),
+        bool_expr,
+        token(")").context(StrContext::Expected(StrContextValue::CharLiteral(')'))),
+    )
         .map(|(_, expr, _)| expr)
+        .context(StrContext::Label("parenthesized expression"))
         .parse_next(input)
 }
 
 pub fn and_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
-    let term_1 = alt((parens_expr, func_call));
-    let term_2 = alt((parens_expr, func_call));
+    let term_1 = alt((parens_expr, func_call))
+        .context(StrContext::Expected(StrContextValue::Description("function call or parenthesized expression")));
+    let term_2 = alt((parens_expr, func_call))
+        .context(StrContext::Expected(StrContextValue::Description("function call or parenthesized expression")));
 
     let (first, rest): (Box<Ast>, Vec<_>) =
-        (term_1, repeat(0.., (token("and"), term_2))).parse_next(input)?;
+        (term_1, repeat(0.., (token("and"), term_2)))
+            .context(StrContext::Label("AND expression"))
+            .parse_next(input)?;
 
     let result = rest.into_iter().fold(first, |acc, (_, right)| {
         Box::new(Ast::And { left: acc, right })
@@ -87,7 +108,9 @@ pub fn and_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
 
 pub fn bool_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
     let (first, rest): (Box<Ast>, Vec<_>) =
-        (and_expr, repeat(0.., (token("or"), and_expr))).parse_next(input)?;
+        (and_expr, repeat(0.., (token("or"), and_expr)))
+            .context(StrContext::Label("OR expression"))
+            .parse_next(input)?;
 
     let result = rest.into_iter().fold(first, |acc, (_, right)| {
         Box::new(Ast::Or { left: acc, right })
@@ -96,5 +119,8 @@ pub fn bool_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
 }
 
 pub fn expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
-    alt((bool_expr, func_call)).parse_next(input)
+    alt((bool_expr, func_call))
+        .context(StrContext::Label("expression"))
+        .context(StrContext::Expected(StrContextValue::Description("boolean expression or function call")))
+        .parse_next(input)
 }
