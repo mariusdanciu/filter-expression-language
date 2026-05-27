@@ -40,7 +40,9 @@ fn string_literal<'s>(input: &mut &'s str) -> Result<Primitives> {
     )
     .map(|s: &'s str| Primitives::String(s.to_string()))
     .context(StrContext::Label("string literal"))
-    .context(StrContext::Expected(StrContextValue::Description("quoted string like \"value\"")))
+    .context(StrContext::Expected(StrContextValue::Description(
+        "quoted string like \"value\"",
+    )))
     .parse_next(input)
 }
 
@@ -78,10 +80,24 @@ pub fn func_call<'s>(input: &mut &str) -> Result<Box<Ast>> {
         .parse_next(input)
 }
 
+// Base term: function call or parenthesized expression
+fn term<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
+    let exp_1 = alt((parens_expr, func_call)).context(StrContext::Expected(
+        StrContextValue::Description("function call or parenthesized expression"),
+    ));
+
+    let expr_2 = (token("not"), alt((parens_expr, func_call)))
+        .map(|(_, expr)| Box::new(Ast::Not { expr }))
+        .context(StrContext::Expected(StrContextValue::Description(
+            "not expression",
+        )));
+    alt((exp_1, expr_2)).parse_next(input)
+}
+
 pub fn parens_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
     (
         token("(").context(StrContext::Expected(StrContextValue::CharLiteral('('))),
-        bool_expr,
+        expr,
         token(")").context(StrContext::Expected(StrContextValue::CharLiteral(')'))),
     )
         .map(|(_, expr, _)| expr)
@@ -89,38 +105,31 @@ pub fn parens_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
         .parse_next(input)
 }
 
+// AND: right-recursive to avoid left-recursion
 pub fn and_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
-    let term_1 = alt((parens_expr, func_call))
-        .context(StrContext::Expected(StrContextValue::Description("function call or parenthesized expression")));
-    let term_2 = alt((parens_expr, func_call))
-        .context(StrContext::Expected(StrContextValue::Description("function call or parenthesized expression")));
-
-    let (first, rest): (Box<Ast>, Vec<_>) =
-        (term_1, repeat(0.., (token("and"), term_2)))
-            .context(StrContext::Label("AND expression"))
-            .parse_next(input)?;
-
-    let result = rest.into_iter().fold(first, |acc, (_, right)| {
-        Box::new(Ast::And { left: acc, right })
-    });
-    Ok(result)
+    alt((
+        (term, token("and"), expr).map(|(left, _, right)| Box::new(Ast::And { left, right })),
+        term,
+    ))
+    .context(StrContext::Label("AND expression"))
+    .parse_next(input)
 }
 
-pub fn bool_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
-    let (first, rest): (Box<Ast>, Vec<_>) =
-        (and_expr, repeat(0.., (token("or"), and_expr)))
-            .context(StrContext::Label("OR expression"))
-            .parse_next(input)?;
-
-    let result = rest.into_iter().fold(first, |acc, (_, right)| {
-        Box::new(Ast::Or { left: acc, right })
-    });
-    Ok(result)
+// OR: right-recursive to avoid left-recursion
+pub fn or_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
+    alt((
+        (and_expr, token("or"), expr).map(|(left, _, right)| Box::new(Ast::Or { left, right })),
+        and_expr,
+    ))
+    .context(StrContext::Label("OR expression"))
+    .parse_next(input)
 }
 
 pub fn expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
-    alt((bool_expr, func_call))
+    or_expr
         .context(StrContext::Label("expression"))
-        .context(StrContext::Expected(StrContextValue::Description("boolean expression or function call")))
+        .context(StrContext::Expected(StrContextValue::Description(
+            "boolean expression or function call",
+        )))
         .parse_next(input)
 }

@@ -64,8 +64,7 @@ struct Context;
 
 fn main() {
     let input =
-        "( ( path_prefix(\"/v1\") or method(\"GET\") ) and has_header(\"X-API-KEY\") )";
-
+        "not (path_prefix(\"/v1\") or method(\"GET\")) and has_header(\"X-API-KEY\")";
     match expr.parse(input) {
         Ok(result) => {
             println!("✓ Parsed successfully:");

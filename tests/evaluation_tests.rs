@@ -301,3 +301,60 @@ fn test_eval_with_query_params() {
     let result = ast.eval(&request, http_evaluator).unwrap();
     assert!(result, "query param should be found");
 }
+
+// NOT operator tests
+
+#[test]
+fn test_eval_not_simple_function() {
+    // Simple not without parentheses
+    let input = "not method(\"POST\")";
+    let ast = expr.parse(input).unwrap();
+    let request = create_request("/api/users", "GET", vec![]);
+
+    let result = ast.eval(&request, http_evaluator).unwrap();
+    assert!(result, "not method(POST) should be true when method is GET");
+}
+
+#[test]
+fn test_eval_not_with_parentheses() {
+    // Not with parentheses around expression
+    let input = "not (path_prefix(\"/admin\"))";
+    let ast = expr.parse(input).unwrap();
+    let request = create_request("/api/users", "GET", vec![]);
+
+    let result = ast.eval(&request, http_evaluator).unwrap();
+    assert!(result, "not (path_prefix(/admin)) should be true for /api path");
+}
+
+#[test]
+fn test_eval_not_in_and_expression() {
+    // Not used within AND expression
+    let input = "path_prefix(\"/api\") and not method(\"POST\")";
+    let ast = expr.parse(input).unwrap();
+    let request = create_request("/api/users", "GET", vec![]);
+
+    let result = ast.eval(&request, http_evaluator).unwrap();
+    assert!(result, "path matches /api and method is not POST");
+}
+
+#[test]
+fn test_eval_not_in_or_expression() {
+    // Not at the beginning of OR expression
+    let input = "not path_prefix(\"/admin\") or method(\"DELETE\")";
+    let ast = expr.parse(input).unwrap();
+    let request = create_request("/api/users", "GET", vec![]);
+
+    let result = ast.eval(&request, http_evaluator).unwrap();
+    assert!(result, "path is not /admin (true) or method is DELETE (false)");
+}
+
+#[test]
+fn test_eval_not_complex_parenthesized() {
+    // Not applied to complex parenthesized expression
+    let input = "not (path_prefix(\"/api\") and method(\"POST\"))";
+    let ast = expr.parse(input).unwrap();
+    let request = create_request("/api/users", "GET", vec![]);
+
+    let result = ast.eval(&request, http_evaluator).unwrap();
+    assert!(result, "not (path /api AND method POST) should be true when method is GET");
+}

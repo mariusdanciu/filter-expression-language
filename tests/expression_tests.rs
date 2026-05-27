@@ -154,27 +154,27 @@ fn test_multiple_or_chain() {
     let mut input = "method(\"GET\") or method(\"POST\") or method(\"PUT\")";
     let result = expr.parse_next(&mut input).expect("Failed to parse multiple OR chain");
 
-    // Should be: OR(OR(GET, POST), PUT) - left-associative
+    // Should be: OR(GET, OR(POST, PUT)) - right-associative
     match *result {
         Ast::Or { left, right } => {
-            // Left: nested OR
+            // Left: GET
             match left.as_ref() {
+                Ast::Func { args, .. } => match &args[0] { Primitives::String(s) => assert_eq!(s, "GET"), _ => panic!("Expected String") },
+                _ => panic!("Expected Func on left"),
+            }
+            // Right: nested OR
+            match right.as_ref() {
                 Ast::Or { left: inner_left, right: inner_right } => {
                     match inner_left.as_ref() {
-                        Ast::Func { args, .. } => match &args[0] { Primitives::String(s) => assert_eq!(s, "GET"), _ => panic!("Expected String") },
-                        _ => panic!("Expected Func"),
-                    }
-                    match inner_right.as_ref() {
                         Ast::Func { args, .. } => match &args[0] { Primitives::String(s) => assert_eq!(s, "POST"), _ => panic!("Expected String") },
                         _ => panic!("Expected Func"),
                     }
+                    match inner_right.as_ref() {
+                        Ast::Func { args, .. } => match &args[0] { Primitives::String(s) => assert_eq!(s, "PUT"), _ => panic!("Expected String") },
+                        _ => panic!("Expected Func"),
+                    }
                 }
-                _ => panic!("Expected nested Or on left"),
-            }
-            // Right: PUT
-            match right.as_ref() {
-                Ast::Func { args, .. } => match &args[0] { Primitives::String(s) => assert_eq!(s, "PUT"), _ => panic!("Expected String") },
-                _ => panic!("Expected Func on right"),
+                _ => panic!("Expected nested Or on right"),
             }
         }
         _ => panic!("Expected Or at root"),
@@ -186,27 +186,27 @@ fn test_multiple_and_chain() {
     let mut input = "has_header(\"Auth\") and has_header(\"Content-Type\") and has_header(\"Accept\")";
     let result = expr.parse_next(&mut input).expect("Failed to parse multiple AND chain");
 
-    // Should be: AND(AND(Auth, Content-Type), Accept) - left-associative
+    // Should be: AND(Auth, AND(Content-Type, Accept)) - right-associative
     match *result {
         Ast::And { left, right } => {
-            // Left: nested AND
+            // Left: Auth
             match left.as_ref() {
+                Ast::Func { args, .. } => match &args[0] { Primitives::String(s) => assert_eq!(s, "Auth"), _ => panic!("Expected String") },
+                _ => panic!("Expected Func on left"),
+            }
+            // Right: nested AND
+            match right.as_ref() {
                 Ast::And { left: inner_left, right: inner_right } => {
                     match inner_left.as_ref() {
-                        Ast::Func { args, .. } => match &args[0] { Primitives::String(s) => assert_eq!(s, "Auth"), _ => panic!("Expected String") },
-                        _ => panic!("Expected Func"),
-                    }
-                    match inner_right.as_ref() {
                         Ast::Func { args, .. } => match &args[0] { Primitives::String(s) => assert_eq!(s, "Content-Type"), _ => panic!("Expected String") },
                         _ => panic!("Expected Func"),
                     }
+                    match inner_right.as_ref() {
+                        Ast::Func { args, .. } => match &args[0] { Primitives::String(s) => assert_eq!(s, "Accept"), _ => panic!("Expected String") },
+                        _ => panic!("Expected Func"),
+                    }
                 }
-                _ => panic!("Expected nested And on left"),
-            }
-            // Right: Accept
-            match right.as_ref() {
-                Ast::Func { args, .. } => match &args[0] { Primitives::String(s) => assert_eq!(s, "Accept"), _ => panic!("Expected String") },
-                _ => panic!("Expected Func on right"),
+                _ => panic!("Expected nested And on right"),
             }
         }
         _ => panic!("Expected And at root"),

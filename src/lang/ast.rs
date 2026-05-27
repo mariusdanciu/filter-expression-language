@@ -23,6 +23,7 @@ pub enum Ast {
     Func { name: String, args: Vec<Primitives> },
     And { left: Box<Ast>, right: Box<Ast> },
     Or { left: Box<Ast>, right: Box<Ast> },
+    Not { expr: Box<Ast> },
 }
 
 impl Ast {
@@ -38,6 +39,9 @@ impl Ast {
             }
             Ast::Or { left, right } => {
                 Ok(left.eval(ctx, evaluator)? || right.eval(ctx, evaluator)?)
+            }
+            Ast::Not { expr } => {
+                Ok(!expr.eval(ctx, evaluator)?)
             }
         }
     }
