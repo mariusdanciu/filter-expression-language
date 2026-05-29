@@ -4,12 +4,13 @@ A boolean expression parser built with [winnow](https://github.com/winnow-rs/win
 
 ## Features
 
-- **Boolean operators**: `and`, `or` with correct precedence (AND binds tighter than OR)
+- **Boolean operators**: `and`, `or`, `not` with correct precedence
 - **Function calls**: Support for functions with multiple arguments
 - **Parentheses**: Group expressions to override default precedence
 - **Left-associative**: Chains like `a or b or c` parse as `((a or b) or c)`
 - **Type-safe AST**: Strongly-typed representation using Rust enums
-- **Comprehensive tests**: 10 test cases validating parser correctness
+- **Stateful parsing**: Context-aware parsing with function validation
+- **Comprehensive tests**: 20+ test cases validating parser correctness and evaluation
 
 ## Installation
 
@@ -24,13 +25,24 @@ fel = { git = "https://github.com/mariusdanciu/filter-expression-language" }
 
 ```rust
 use winnow::Parser;
+use winnow::stream::Stateful;
 use fel::lang::parsers::*;
-use fel::lang::ast::{Ast, Primitives};
+use fel::lang::ast::{ParserContext, PrimitivesTypes};
+use std::collections::HashMap;
 
 fn main() {
-    let mut input = "path_prefix(\"/api\") and method(\"GET\")";
+    let input_str = "path_prefix(\"/api\") and method(\"GET\")";
     
-    let result = expr.parse_next(&mut input).unwrap();
+    // Create parser context with known functions
+    let mut ctx = ParserContext {
+        known_functions: HashMap::new(),
+        original_input: input_str.to_string(),
+    };
+    ctx.known_functions.insert("path_prefix".to_string(), vec![PrimitivesTypes::String]);
+    ctx.known_functions.insert("method".to_string(), vec![PrimitivesTypes::String]);
+    
+    let input = Stateful { input: input_str, state: &ctx };
+    let result = expr.parse(input).unwrap();
     
     println!("{:#?}", result);
 }
@@ -39,9 +51,10 @@ fn main() {
 ## Grammar
 
 ```
-expr       ::= and_expr ('or' and_expr)*
+expr       ::= or_expr
+or_expr    ::= and_expr ('or' and_expr)*
 and_expr   ::= term ('and' term)*
-term       ::= func_call | parens_expr
+term       ::= 'not'? (func_call | parens_expr)
 parens_expr::= '(' expr ')'
 func_call  ::= identifier '(' args? ')'
 args       ::= primitive (',' primitive)*
@@ -49,20 +62,25 @@ primitive  ::= string | int | bool
 string     ::= '"' [^"]* '"'
 int        ::= [0-9]+
 bool       ::= 'true' | 'false'
-identifier ::= [a-zA-Z_][a-zA-Z0-9_]*
+identifier ::= [a-zA-Z_][a-zA-Z0-9_-]*
 ```
 
 ## Operator Precedence
 
 1. Parentheses (highest)
-2. `and`
-3. `or` (lowest)
+2. `not`
+3. `and`
+4. `or` (lowest)
 
 ### Examples
 
 ```rust
 // AND binds tighter than OR
 "a or b and c"  // parses as: a or (b and c)
+
+// NOT has high precedence
+"not a and b"  // parses as: (not a) and b
+"not (a or b)"  // parses as: not (a or b)
 
 // Parentheses override precedence
 "(a or b) and c"  // parses as: (a or b) and c
@@ -83,6 +101,7 @@ pub enum Ast {
     Func { name: String, args: Vec<Primitives> },
     And { left: Box<Ast>, right: Box<Ast> },
     Or { left: Box<Ast>, right: Box<Ast> },
+    Not { expr: Box<Ast> },
 }
 ```
 
@@ -95,6 +114,26 @@ pub enum Primitives {
     Int(i32),
 }
 ```
+
+### ParserContext
+
+```rust
+pub struct ParserContext {
+    pub known_functions: HashMap<String, Vec<PrimitivesTypes>>,
+    pub original_input: String,
+}
+
+pub enum PrimitivesTypes {
+    Bool,
+    String,
+    Int,
+}
+```
+
+The `ParserContext` enables stateful parsing, allowing the parser to validate function names and argument types during parsing. This is particularly useful for:
+- Function name validation
+- Type checking at parse time
+- Better error messages with original input context
 
 ## Example Expressions
 
@@ -164,14 +203,26 @@ After parsing, you can evaluate expressions against a context using the `eval` m
 ### Evaluation API
 
 ```rust
-pub type FunctionEvaluator<T> = fn(&T, &str, &Vec<Primitives>) -> Result<bool, String>;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum EvaluatorError {
+    #[error("function not found: {0}")]
+    FunctionNotFound(String),
+    #[error("invalid arguments: {0}")]
+    InvalidArguments(String),
+    #[error("evaluation error: {0}")]
+    EvaluationError(String),
+}
+
+pub type FunctionEvaluator<T> = fn(&T, &str, &Vec<Primitives>) -> Result<bool, EvaluatorError>;
 
 impl Ast {
     pub fn eval<T>(
         &self,
         ctx: &T,
         evaluator: FunctionEvaluator<T>,
-    ) -> Result<bool, String>
+    ) -> Result<bool, EvaluatorError>
 }
 ```
 
@@ -179,28 +230,42 @@ impl Ast {
 
 ```rust
 use winnow::Parser;
+use winnow::stream::Stateful;
 use fel::lang::parsers::*;
-use fel::lang::ast::Primitives;
+use fel::lang::ast::{EvaluatorError, ParserContext, Primitives, PrimitivesTypes};
+use std::collections::HashMap;
 
 // Define your context type
 struct HttpRequest {
     path: String,
     method: String,
-    headers: Vec<(String, String)>,
+    headers: HashMap<String, String>,
 }
 
 fn main() {
     // Parse the expression
-    let input = "path_prefix(\"/api\") and method(\"GET\")";
+    let input_str = "path_prefix(\"/api\") and method(\"GET\")";
+    
+    // Create parser context
+    let mut parser_ctx = ParserContext {
+        known_functions: HashMap::new(),
+        original_input: input_str.to_string(),
+    };
+    parser_ctx.known_functions.insert("path_prefix".to_string(), vec![PrimitivesTypes::String]);
+    parser_ctx.known_functions.insert("method".to_string(), vec![PrimitivesTypes::String]);
+    parser_ctx.known_functions.insert("has_header".to_string(), vec![PrimitivesTypes::String]);
+    
+    let input = Stateful { input: input_str, state: &parser_ctx };
     let ast = expr.parse(input).unwrap();
 
     // Create a context
+    let mut headers = HashMap::new();
+    headers.insert("X-API-KEY".to_string(), "secret123".to_string());
+    
     let request = HttpRequest {
         path: "/api/users".to_string(),
         method: "GET".to_string(),
-        headers: vec![
-            ("X-API-KEY".to_string(), "secret123".to_string()),
-        ],
+        headers,
     };
 
     // Define the evaluator function
@@ -210,24 +275,30 @@ fn main() {
                 if let Some(Primitives::String(prefix)) = args.first() {
                     Ok(ctx.path.starts_with(prefix))
                 } else {
-                    Err("path_prefix requires a string argument".to_string())
+                    Err(EvaluatorError::InvalidArguments(
+                        "path_prefix requires a string argument".to_string()
+                    ))
                 }
             }
             "method" => {
                 if let Some(Primitives::String(method)) = args.first() {
                     Ok(ctx.method == *method)
                 } else {
-                    Err("method requires a string argument".to_string())
+                    Err(EvaluatorError::InvalidArguments(
+                        "method requires a string argument".to_string()
+                    ))
                 }
             }
             "has_header" => {
                 if let Some(Primitives::String(header_name)) = args.first() {
-                    Ok(ctx.headers.iter().any(|(name, _)| name == header_name))
+                    Ok(ctx.headers.contains_key(header_name))
                 } else {
-                    Err("has_header requires a string argument".to_string())
+                    Err(EvaluatorError::InvalidArguments(
+                        "has_header requires a string argument".to_string()
+                    ))
                 }
             }
-            _ => Err(format!("Unknown function: {}", name)),
+            _ => Err(EvaluatorError::FunctionNotFound(name.to_string())),
         }
     };
 
@@ -251,11 +322,13 @@ The evaluator function receives:
 - `name: &str` - the function name (e.g., `"path_prefix"`)
 - `args: &Vec<Primitives>` - the function arguments
 
-It returns `Result<bool, String>`:
+It returns `Result<bool, EvaluatorError>`:
 - `Ok(true)` or `Ok(false)` for the boolean result
-- `Err(message)` for evaluation errors
+- `Err(EvaluatorError::FunctionNotFound)` when the function doesn't exist
+- `Err(EvaluatorError::InvalidArguments)` when arguments are invalid
+- `Err(EvaluatorError::EvaluationError)` for other evaluation errors
 
-The AST handles the boolean logic (`and`, `or`) automatically, calling your evaluator only for leaf function nodes.
+The AST handles the boolean logic (`and`, `or`, `not`) automatically, calling your evaluator only for leaf function nodes.
 
 ## Running Tests
 
@@ -267,13 +340,15 @@ The test suite includes validation for:
 - Simple function calls
 - OR expressions
 - AND expressions
+- NOT operator
 - Combined AND/OR with precedence
 - Parenthesized expressions
-- Nested parentheses
+- Nested parentheses and NOT
 - Multiple OR chains (left-associativity)
 - Multiple AND chains (left-associativity)
 - Complex nested expressions
 - Functions with multiple arguments
+- Real-world HTTP request routing scenarios
 
 ## Project Structure
 
@@ -281,13 +356,13 @@ The test suite includes validation for:
 fel/
 ├── src/
 │   ├── lang/
-│   │   ├── ast.rs       # AST data structures
+│   │   ├── ast.rs       # AST data structures, evaluator, error types
 │   │   ├── parsers.rs   # Parser combinators
 │   │   └── mod.rs       # Module exports
 │   ├── lib.rs           # Library entry point
 │   └── main.rs          # Example binary
 └── tests/
-    └── expression_tests.rs  # Test suite
+    └── http_request_tests.rs  # Comprehensive test suite with HTTP routing examples
 ```
 
 ## Use Cases
