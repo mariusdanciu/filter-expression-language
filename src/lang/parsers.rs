@@ -2,17 +2,17 @@ use winnow::Parser;
 use winnow::ascii::dec_int;
 use winnow::ascii::space0;
 use winnow::combinator::*;
-use winnow::error::{AddContext, ParserError, StrContext, StrContextValue};
+use winnow::error::ContextError;
+use winnow::error::{StrContext, StrContextValue};
+use winnow::stream::Stateful;
 use winnow::token::*;
 
 use crate::lang::ast::*;
 
-type Result<T> = winnow::Result<T>;
+type Input<'s> = Stateful<&'s str, &'s ParserContext>;
+type Result<T> = winnow::Result<T, ContextError>;
 
-pub fn token<'s, E>(name: &'s str) -> impl Parser<&'s str, &'s str, E>
-where
-    E: ParserError<&'s str> + AddContext<&'s str, StrContext>,
-{
+pub fn token<'s>(name: &'s str) -> impl Parser<Input<'s>, &'s str, ContextError> {
     delimited(
         space0,        // 1. Consume 0 or more spaces on the left
         literal(name), // 2. Parse the core literal token
@@ -20,11 +20,11 @@ where
     )
 }
 
-fn int_literal<'s>(input: &mut &'s str) -> Result<Primitives> {
+fn int_literal<'s>(input: &mut Input<'s>) -> Result<Primitives> {
     dec_int.parse_next(input).map(Primitives::Int)
 }
 
-fn bool_literal<'s>(input: &mut &'s str) -> Result<Primitives> {
+fn bool_literal<'s>(input: &mut Input<'s>) -> Result<Primitives> {
     alt((
         token("true").map(|_| Primitives::Bool(true)),
         token("false").map(|_| Primitives::Bool(false)),
@@ -32,7 +32,7 @@ fn bool_literal<'s>(input: &mut &'s str) -> Result<Primitives> {
     .parse_next(input)
 }
 
-fn string_literal<'s>(input: &mut &'s str) -> Result<Primitives> {
+fn string_literal<'s>(input: &mut Input<'s>) -> Result<Primitives> {
     delimited(
         '"',                 // Opening delimiter
         take_till(0.., '"'), // Consume everything until the closing quote
@@ -46,11 +46,11 @@ fn string_literal<'s>(input: &mut &'s str) -> Result<Primitives> {
     .parse_next(input)
 }
 
-fn local_literal<'s>(input: &mut &'s str) -> Result<Primitives> {
+fn local_literal<'s>(input: &mut Input<'s>) -> Result<Primitives> {
     alt((int_literal, bool_literal, string_literal)).parse_next(input)
 }
 
-fn seq_literals<'s>(input: &mut &'s str) -> Result<Vec<Primitives>> {
+fn seq_literals<'s>(input: &mut Input<'s>) -> Result<Vec<Primitives>> {
     separated(
         0..,           // Expect 0 or more matching items (use 1.. for mandatory)
         local_literal, // What we are looking for
@@ -59,11 +59,11 @@ fn seq_literals<'s>(input: &mut &'s str) -> Result<Vec<Primitives>> {
     .parse_next(input)
 }
 
-pub fn func_name<'s>(input: &mut &'s str) -> Result<&'s str> {
+pub fn func_name<'s>(input: &mut Input<'s>) -> Result<&'s str> {
     take_while(1.., ('a'..='z', 'A'..='Z', '0'..='9', '-', '_')).parse_next(input)
 }
 
-pub fn func_call<'s>(input: &mut &str) -> Result<Box<Ast>> {
+pub fn func_call<'s>(input: &mut Input<'s>) -> Result<Box<Ast>> {
     (
         func_name.context(StrContext::Label("function name")),
         token("(").context(StrContext::Expected(StrContextValue::CharLiteral('('))),
@@ -81,55 +81,45 @@ pub fn func_call<'s>(input: &mut &str) -> Result<Box<Ast>> {
 }
 
 // Base term: function call or parenthesized expression
-fn term<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
-    let exp_1 = alt((parens_expr, func_call)).context(StrContext::Expected(
-        StrContextValue::Description("function call or parenthesized expression"),
-    ));
-
-    let expr_2 = (token("not"), alt((parens_expr, func_call)))
-        .map(|(_, expr)| Box::new(Ast::Not { expr }))
-        .context(StrContext::Expected(StrContextValue::Description(
-            "not expression",
-        )));
-    alt((exp_1, expr_2)).parse_next(input)
+pub fn term<'s>(input: &mut Input<'s>) -> Result<Box<Ast>> {
+    (opt(token("not")), alt((parens_expr, func_call)))
+        .map(|(not, expr)| match not {
+            Some(_) => Box::new(Ast::Not { expr }),
+            None => expr,
+        })
+        .parse_next(input)
 }
 
-pub fn parens_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
+pub fn parens_expr<'s>(input: &mut Input<'s>) -> Result<Box<Ast>> {
     (
-        token("(").context(StrContext::Expected(StrContextValue::CharLiteral('('))),
+        token("("),
         expr,
-        token(")").context(StrContext::Expected(StrContextValue::CharLiteral(')'))),
+        token(")"),
     )
-        .map(|(_, expr, _)| expr)
-        .context(StrContext::Label("parenthesized expression"))
+     .map(|(_, expr, _)| expr)
         .parse_next(input)
 }
 
-// AND: right-recursive to avoid left-recursion
-pub fn and_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
-    alt((
-        (term, token("and"), expr).map(|(left, _, right)| Box::new(Ast::And { left, right })),
-        term,
-    ))
-    .context(StrContext::Label("AND expression"))
-    .parse_next(input)
+// AND: parse term (token("and") term)*
+pub fn and_expr<'s>(input: &mut Input<'s>) -> Result<Box<Ast>> {
+    let (first, rest): (Box<Ast>, Vec<(&str, Box<Ast>)>) =
+        (term, repeat(0.., (token("and"), term))).parse_next(input)?;
+
+    Ok(rest.into_iter().fold(first, |left, (_, right)| {
+        Box::new(Ast::And { left, right })
+    }))
 }
 
-// OR: right-recursive to avoid left-recursion
-pub fn or_expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
-    alt((
-        (and_expr, token("or"), expr).map(|(left, _, right)| Box::new(Ast::Or { left, right })),
-        and_expr,
-    ))
-    .context(StrContext::Label("OR expression"))
-    .parse_next(input)
+// OR: parse and_expr (token("or") and_expr)*
+pub fn or_expr<'s>(input: &mut Input<'s>) -> Result<Box<Ast>> {
+    let (first, rest): (Box<Ast>, Vec<(&str, Box<Ast>)>) =
+        (and_expr, repeat(0.., (token("or"), and_expr))).parse_next(input)?;
+
+    Ok(rest.into_iter().fold(first, |left, (_, right)| {
+        Box::new(Ast::Or { left, right })
+    }))
 }
 
-pub fn expr<'s>(input: &mut &'s str) -> Result<Box<Ast>> {
-    or_expr
-        .context(StrContext::Label("expression"))
-        .context(StrContext::Expected(StrContextValue::Description(
-            "boolean expression or function call",
-        )))
-        .parse_next(input)
+pub fn expr<'s>(input: &mut Input<'s>) -> Result<Box<Ast>> {
+    or_expr.parse_next(input)
 }

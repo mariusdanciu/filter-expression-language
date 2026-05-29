@@ -1,7 +1,14 @@
 use std::fmt::Debug;
 use thiserror::Error;
+use std::collections::HashMap;
 
-#[derive(Error,Debug)]
+#[derive(Debug)]
+pub struct ParserContext {
+    pub known_functions: HashMap<String, Vec<PrimitivesTypes>>,
+    pub original_input: String,
+}
+
+#[derive(Error, Debug)]
 pub enum EvaluatorError {
     #[error("function not found: {0}")]
     FunctionNotFound(String),
@@ -16,6 +23,13 @@ pub enum Primitives {
     Bool(bool),
     String(String),
     Int(i32),
+}
+
+#[derive(Debug)]
+pub enum PrimitivesTypes {
+    Bool,
+    String,
+    Int,
 }
 
 #[derive(Debug)]
@@ -40,9 +54,7 @@ impl Ast {
             Ast::Or { left, right } => {
                 Ok(left.eval(ctx, evaluator)? || right.eval(ctx, evaluator)?)
             }
-            Ast::Not { expr } => {
-                Ok(!expr.eval(ctx, evaluator)?)
-            }
+            Ast::Not { expr } => Ok(!expr.eval(ctx, evaluator)?),
         }
     }
 }
