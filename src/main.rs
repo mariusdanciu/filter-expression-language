@@ -91,7 +91,7 @@ fn main() {
     ctx.known_functions
         .insert("has_query".to_string(), vec![PrimitivesTypes::String]);
 
-    let mut input = Stateful { input: input_str, state: &ctx };
+    let input = Stateful { input: input_str, state: &ctx };
 
     match expr.parse(input) {
         Ok(result) => {
